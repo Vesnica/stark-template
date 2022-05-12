@@ -25,6 +25,18 @@ pub struct InputArg {
     pub n: usize,
 }
 
+pub struct PublicInputs {
+    pub start: BaseElement,
+    pub result: BaseElement,
+}
+
+impl Serializable for PublicInputs {
+    fn write_into<W: ByteWriter>(&self, target: &mut W) {
+        target.write(self.start);
+        target.write(self.result);
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Data {
     pub start: String,
@@ -60,15 +72,29 @@ pub fn to_data(proof: Vec<u8>, public_input: PublicInputs) -> Data {
     }
 }
 
-pub struct PublicInputs {
-    pub start: BaseElement,
-    pub result: BaseElement,
+pub type TraceType = TraceTable<BaseElement>;
+
+pub fn build_trace(arg: &InputArg) -> TraceType {
+    let trace_width = 1;
+    let mut trace = TraceTable::new(trace_width, arg.n);
+
+    trace.fill(
+        |state| {
+            state[0] = BaseElement::new(arg.start);
+        },
+        |_, state| {
+            state[0] = state[0].exp(3u32.into()) + BaseElement::new(42);
+        },
+    );
+
+    trace
 }
 
-impl Serializable for PublicInputs {
-    fn write_into<W: ByteWriter>(&self, target: &mut W) {
-        target.write(self.start);
-        target.write(self.result);
+pub fn get_pub_inputs(trace: &TraceType) -> PublicInputs {
+    let last_step = trace.length() - 1;
+    PublicInputs {
+        start: trace.get(0, 0),
+        result: trace.get(0, last_step),
     }
 }
 
@@ -77,8 +103,6 @@ pub struct FreshAir {
     start: BaseElement,
     result: BaseElement,
 }
-
-pub type TraceType = TraceTable<BaseElement>;
 
 impl Air for FreshAir {
     type BaseField = BaseElement;
@@ -119,29 +143,5 @@ impl Air for FreshAir {
             Assertion::single(0, 0, self.start),
             Assertion::single(0, last_step, self.result),
         ]
-    }
-}
-
-pub fn build_trace(arg: &InputArg) -> TraceType {
-    let trace_width = 1;
-    let mut trace = TraceTable::new(trace_width, arg.n);
-
-    trace.fill(
-        |state| {
-            state[0] = BaseElement::new(arg.start);
-        },
-        |_, state| {
-            state[0] = state[0].exp(3u32.into()) + BaseElement::new(42);
-        },
-    );
-
-    trace
-}
-
-pub fn get_pub_inputs(trace: &TraceType) -> PublicInputs {
-    let last_step = trace.length() - 1;
-    PublicInputs {
-        start: trace.get(0, 0),
-        result: trace.get(0, last_step),
     }
 }
