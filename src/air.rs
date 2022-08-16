@@ -7,7 +7,6 @@ use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
-use winter_math::fields::f128::BaseElement;
 use winter_math::FieldElement;
 use winter_prover::{Trace, TraceTable};
 use winter_utils::{ByteWriter, Serializable};
@@ -15,6 +14,8 @@ use winter_utils::{ByteWriter, Serializable};
 use base64::{decode, encode};
 use clap::Args;
 use serde::{Deserialize, Serialize};
+
+pub type BaseElement = winter_math::fields::f128::BaseElement;
 
 #[derive(Args, Debug)]
 #[clap(next_help_heading = "INPUT ARGUMENTS")]
@@ -75,15 +76,43 @@ pub fn to_data(proof: Vec<u8>, public_input: PublicInputs) -> Data {
 pub type TraceType = TraceTable<BaseElement>;
 
 pub fn build_trace(arg: &InputArg) -> TraceType {
-    let trace_width = 1;
+    let trace_width = 4;
     let mut trace = TraceTable::new(trace_width, arg.n);
 
     trace.fill(
         |state| {
-            state[0] = BaseElement::new(arg.start);
+            let a = arg.start;
+            let b = arg.n as u128;
+            if a > b {
+                state[0] = BaseElement::from(a - b);
+            } else {
+                state[0] = BaseElement::from(b - a);
+            }
+            state[1] = BaseElement::from(a + 1);
+            state[2] = BaseElement::from(b - 1);
+            if a + 1 > b - 1 {
+                state[3] = BaseElement::ONE;
+            } else {
+                state[3] = BaseElement::ZERO;
+            }
+            println!("trace.fill.init: step:0 state:{:?}", state);
         },
-        |_, state| {
-            state[0] = state[0].exp(3u32.into()) + BaseElement::new(42);
+        |last_step, state| {
+            state[0] = state[3] * (state[1] - state[2])
+                + (BaseElement::ONE - state[3]) * (state[2] - state[1]);
+            let next: u128 = last_step as u128 + 2;
+            state[1] = BaseElement::from(arg.start + next);
+            state[2] = BaseElement::from(arg.n as u128 - next);
+            if (arg.start + next) > (arg.n as u128 - next) {
+                state[3] = BaseElement::ONE;
+            } else {
+                state[3] = BaseElement::ZERO;
+            }
+            println!(
+                "trace.fill.update: step:{} state:{:?}",
+                last_step + 1,
+                state
+            );
         },
     );
 
@@ -109,9 +138,9 @@ impl Air for FreshAir {
     type PublicInputs = PublicInputs;
 
     fn new(trace_info: TraceInfo, pub_inputs: PublicInputs, options: ProofOptions) -> Self {
-        assert_eq!(1, trace_info.width());
+        assert_eq!(4, trace_info.width());
 
-        let degrees = vec![TransitionConstraintDegree::new(3)];
+        let degrees = vec![TransitionConstraintDegree::new(2)];
         let num_assertions = 2;
 
         FreshAir {
@@ -131,10 +160,16 @@ impl Air for FreshAir {
         _periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current_state = &frame.current()[0];
-        let next_state = current_state.exp(3u32.into()).add(E::from(42u32));
-
-        result[0] = frame.next()[0] - next_state;
+        let current = frame.current();
+        let next;
+        next = current[3] * (current[1] - current[2])
+            + (E::ONE - current[3]) * (current[2] - current[1]);
+        result[0] = frame.next()[0] - next;
+        // println!(
+        //     "evaluate_transition: current:{:?} next:{:?}",
+        //     current,
+        //     frame.next()
+        // );
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
